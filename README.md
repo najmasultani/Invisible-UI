@@ -2,6 +2,8 @@
 
 # 👋 Gesture Navigation System for Google Slides
 
+DEMO: https://framer.com/projects/Zero-Distance--nV9PyBnMbb4wt0S3KW7i-uLQRz?node=augiA20Il
+
 ## ✅ What Are We Building?
 
 We are building a **gesture-based navigation system** that allows users to control **Google Slides** using **hand gestures** detected via a webcam.
