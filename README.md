@@ -13,19 +13,18 @@ source .venv/bin/activate
 What are we building?
 The gestures navigation system in google slides.
 
-- Item 1
-- Item 2
-  - Subitem 2.1
-  - Subitem 2.2
-- Item 3
+Components of the app
+- Hand gesture recognition
+  - Video stream -> classified gesture
+  - Gestures:
+      - "Fist"
+      - "3 fingers together horiznotal up or down"
+- Classified gesture to a keyboard command
+  - "3 fingers together horiznotal up or down" -> scroll up or down -> hold the key up or down for 5 seconds
+- Keyboard command to an action on a presentation website
+  - Use that key up or down for 5 seconds on the presentation website to move along the slides 
 
-What components do we need?
-1. hand gesture recognition
-2. convert gesture to command
-3. "three fingers horizontal up or down move" -> scroll up or down
-   "fist" -> pause and start
-   "peace" -> close the app
-google slide API convert gesture to action in the app 
+
 
 
 
