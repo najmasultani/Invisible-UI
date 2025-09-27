@@ -1,5 +1,45 @@
 # Invisible-UI
 
+# 👋 Gesture Navigation System for Google Slides
+
+## ✅ What Are We Building?
+
+We are building a **gesture-based navigation system** that allows users to control **Google Slides** using **hand gestures** detected via a webcam.
+
+---
+
+## 🧩 Components of the App
+
+### 1. Hand Gesture Recognition
+- Use a webcam to stream live video.
+- Detect and classify specific hand gestures in real-time.
+
+### 2. Video Stream → Gesture Classification
+- Continuously capture video frames from the webcam.
+- Analyze each frame to identify gestures such as:
+  - `"Fist"`
+  - `"3 fingers together, horizontal (pointing up or down)"`
+
+### 3. Gesture → Keyboard Command Mapping
+- Map each recognized gesture to a corresponding keyboard command.
+
+#### Example Mappings:
+- `"Fist"` → (Neutral or pause state)
+- `"3 fingers together, horizontal (up or down)"`:
+  - If pointing **up** → simulate holding the **Up Arrow** key.
+  - If pointing **down** → simulate holding the **Down Arrow** key.
+  - The simulated key press should be held for **5 seconds**.
+
+### 4. Keyboard Command → Presentation Control
+- Google Slides (or similar platforms) respond to arrow key input:
+  - **Up / Left Arrow** → Previous slide
+  - **Down / Right Arrow** → Next slide
+- Simulated key presses trigger slide navigation.
+
+---
+
+## 🔄 System Flow Overview
+
 Create virtual environment:
 ```bash
 python -m venv .venv
@@ -9,22 +49,3 @@ Entering virtual environment:
 ```bash
 source .venv/bin/activate
 ```
-
-What are we building?
-The gestures navigation system in google slides.
-
-Components of the app
-- Hand gesture recognition
-  - Video stream -> classified gesture
-  - Gestures:
-      - "Fist"
-      - "3 fingers together horiznotal up or down"
-- Classified gesture to a keyboard command
-  - "3 fingers together horiznotal up or down" -> scroll up or down -> hold the key up or down for 5 seconds
-- Keyboard command to an action on a presentation website
-  - Use that key up or down for 5 seconds on the presentation website to move along the slides 
-
-
-
-
-
