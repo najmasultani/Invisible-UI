@@ -21,11 +21,14 @@ Output: string [gesture class]
 
 - Continuously capture video frames from the webcam.
 - Analyze each frame to classify gestures such as:
-  - Fist → toggle PAUSE/RESUME
   - Peace (✌️) → QUIT (also sends Esc if Slides Mode is ON)
-  - Three fingers (index+middle+ring) + swipe L/R → Next/Prev Section (UI) / Next/Prev Slide (Slides Mode)
+  - Thumbs-Up (👍) → NEXT slide (Right Arrow)
+  - Thumbs-Down (👎) → PREVIOUS slide (Left Arrow)
+  - Rock (🤘) → SCROLL UP (Arrow Up)
+  - Shaka (🤙) → SCROLL DOWN (Arrow Down)
   - OK sign (👌) → START SLIDESHOW (Cmd/Ctrl+Enter)
   - Open palm (✋) → STOP SLIDESHOW (Esc)
+
 
 ### 3. Gesture → Keyboard Command Mapping
 Input: string [gesture class]  
