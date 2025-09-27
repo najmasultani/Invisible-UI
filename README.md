@@ -21,8 +21,6 @@ Output: string [gesture class]
 - Analyze each frame to classify gestures such as:
   - Fist → toggle PAUSE/RESUME
   - Peace (✌️) → QUIT (also sends Esc if Slides Mode is ON)
-  - Rock (🤘) → SCROLL UP (UI) / Up Arrow (Slides Mode)
-  - Shaka (🤙) → SCROLL DOWN (UI) / Down Arrow (Slides Mode)
   - Three fingers (index+middle+ring) + swipe L/R → Next/Prev Section (UI) / Next/Prev Slide (Slides Mode)
   - OK sign (👌) → START SLIDESHOW (Cmd/Ctrl+Enter)
   - Open palm (✋) → STOP SLIDESHOW (Esc)
