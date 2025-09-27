@@ -12,11 +12,10 @@ We are building a **gesture-based navigation system** that allows users to contr
 
 ### 1. Hand Gesture Recognition
 - Use a webcam to stream live video.
-- Detect and classify specific hand gestures in real-time.
 
 ### 2. Video Stream → Gesture Classification
 - Continuously capture video frames from the webcam.
-- Analyze each frame to identify gestures such as:
+- Analyze each frame to classify gestures such as:
   - Fist → toggle PAUSE/RESUME
   - Peace (✌️) → QUIT (also sends Esc if Slides Mode is ON)
   - Rock (🤘) → SCROLL UP (UI) / Up Arrow (Slides Mode)
