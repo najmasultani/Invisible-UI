@@ -14,6 +14,9 @@ We are building a **gesture-based navigation system** that allows users to contr
 - Use a webcam to stream live video.
 
 ### 2. Video Stream → Gesture Classification
+Input: video stream
+Output: string [gesture class]
+
 - Continuously capture video frames from the webcam.
 - Analyze each frame to classify gestures such as:
   - Fist → toggle PAUSE/RESUME
@@ -25,6 +28,9 @@ We are building a **gesture-based navigation system** that allows users to contr
   - Open palm (✋) → STOP SLIDESHOW (Esc)
 
 ### 3. Gesture → Keyboard Command Mapping
+Input: string [gesture class]
+Output: keyboard command
+
 - Map each recognized gesture to a corresponding keyboard command.
 
 #### Example Mappings:
@@ -35,6 +41,9 @@ We are building a **gesture-based navigation system** that allows users to contr
   - The simulated key press should be held for **5 seconds**.
 
 ### 4. Keyboard Command → Presentation Control
+Input: keyboard command
+Output: action in the presentation
+
 - Google Slides (or similar platforms) respond to arrow key input:
 - Simulated key presses trigger slide navigation.
 
