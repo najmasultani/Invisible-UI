@@ -3,12 +3,21 @@ import time
 from collections import deque
 from math import hypot
 import threading
+import platform
 
 import cv2
 import mediapipe as mp
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk  # for safe preview in Tk
+
+# NEW: for sending keys to Google Slides when Slides Mode is ON
+try:
+    import pyautogui
+except Exception:
+    pyautogui = None  # we'll warn in the UI if not installed
+
+IS_MAC = platform.system() == "Darwin"
 
 # ---------- App/Preview settings ----------
 W, H = 640, 360                  # camera capture size
@@ -72,10 +81,10 @@ def is_peace(lm):
 
 def classify(lm):
     # order matters to avoid conflicts
-    if is_peace(lm): return "peace"   # quit
+    if is_peace(lm): return "peace"   # quit / exit slideshow
     if is_fist(lm):  return "fist"    # pause/resume
     if is_point(lm): return "point"   # L/R navigation
-    if is_three(lm): return "three"   # U/D scrolling
+    if is_three(lm): return "three"   # U/D scrolling (UI only)
     return None
 
 def stable_emit(name, now):
@@ -95,8 +104,8 @@ def stable_emit(name, now):
 class DemoApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Gesture Demo (gesture-only)")
-        self.root.geometry("980x640")
+        self.root.title("Gesture Demo • Slides Control")
+        self.root.geometry("1000x660")
         self.root.configure(bg="white")  # light background
 
         # quick quit keybinds
@@ -106,6 +115,9 @@ class DemoApp:
         self.paused = False
         self.sections = ["Inbox", "Notes", "Tasks", "Calendar"]
         self.section_index = 0
+
+        # Slides control toggle
+        self.slides_mode = tk.BooleanVar(value=False)
 
         # for preview/frame exchange across threads
         self.latest_bgr = None
@@ -135,21 +147,36 @@ class DemoApp:
         )
         self.status.pack(side="left")
 
-        self.chip = tk.Label(top, text="LIVE", fg="white", bg="#2e7d32", padx=10, pady=6)
+        # Slides mode controls
+        ctrls = tk.Frame(top, bg="#111111")
+        ctrls.pack(side="right", padx=8)
+
+        self.chip = tk.Label(ctrls, text="LIVE", fg="white", bg="#2e7d32", padx=10, pady=6)
         self.chip.pack(side="right", padx=8)
+
+        slides_chk = tk.Checkbutton(
+            ctrls, text="Slides Mode", variable=self.slides_mode,
+            fg="white", bg="#111111", selectcolor="#111111",
+            activebackground="#111111", activeforeground="white"
+        )
+        slides_chk.pack(side="right", padx=8)
+
+        start_btn = tk.Button(
+            ctrls, text="Start slideshow (⌘/Ctrl+Enter)",
+            command=self.start_slideshow, padx=10, pady=4
+        )
+        start_btn.pack(side="right", padx=8)
 
         # Camera preview box (top-right)
         self.preview = tk.Label(self.root, bd=1, relief="solid", bg="white")
-        # Place it under the top bar to the right
-        self.preview.place(x=self.root.winfo_reqwidth()-PREVIEW_SIZE[0]-20, y=56,
-                           width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+        self.preview.place(x=800, y=58, width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
 
         # Body split: left sections, right content
         body = tk.Frame(self.root, bg="white")
         body.pack(side="top", fill="both", expand=True)
 
         # Left: sections list
-        left = tk.Frame(body, width=200, bg="white")
+        left = tk.Frame(body, width=220, bg="white")
         left.pack(side="left", fill="y")
         tk.Label(left, text="Sections", font=("Arial", 12, "bold"),
                  fg="#111", bg="white").pack(anchor="w", padx=12, pady=(12, 0))
@@ -163,7 +190,7 @@ class DemoApp:
         self.listbox.pack(fill="y", padx=12, pady=10)
         self.listbox.select_set(0)
 
-        # Right: scrollable content
+        # Right: scrollable content (used when Slides Mode is OFF)
         right = tk.Frame(body, bg="white")
         right.pack(side="left", fill="both", expand=True)
 
@@ -186,23 +213,34 @@ class DemoApp:
 
         self.content.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
-        hint = tk.Label(
-            self.root,
-            text="Fist=Pause/Resume • Peace=Quit • Point + Swipe L/R=Change Section • Three + Swipe U/D=Scroll",
-            fg="#333333", bg="white"
+        hint_text = (
+            "Fist=Pause/Resume • Peace=Quit • "
+            "Point + Swipe L/R=Change Section (or Next/Prev Slide when Slides Mode ON) • "
+            "Three + Swipe U/D=Scroll (UI only)"
         )
+        hint = tk.Label(self.root, text=hint_text, fg="#333333", bg="white")
         hint.pack(side="bottom", fill="x", pady=8)
+
+        # Warning if pyautogui missing
+        if pyautogui is None:
+            warn = tk.Label(
+                self.root,
+                text="Slides Mode needs 'pyautogui' (pip install pyautogui) and Accessibility permission on macOS.",
+                fg="#b00020", bg="white"
+            )
+            warn.pack(side="bottom", pady=(0, 8))
 
     # ----- HUD update -----
     def tick_hud(self):
         sec = self.sections[self.section_index]
-        self.status.config(text=f"PAUSED={self.paused} | Section: {sec} | static: {self.name or '-'}")
+        mode = "Slides" if self.slides_mode.get() else "Local UI"
+        self.status.config(text=f"Mode={mode} | PAUSED={self.paused} | Section: {sec} | static: {self.name or '-'}")
         self.chip.config(text="PAUSED" if self.paused else "LIVE",
                          bg="#c62828" if self.paused else "#2e7d32")
         if self.running:
             self.root.after(120, self.tick_hud)
 
-    # ----- Actions (UI only, no OS keys) -----
+    # ----- Local UI Actions (no OS keys) -----
     def next_section(self):
         self.section_index = (self.section_index + 1) % len(self.sections)
         self.listbox.select_clear(0, "end")
@@ -229,6 +267,45 @@ class DemoApp:
             pass
         self.root.after(100, self.root.destroy)
 
+    # ----- Slides Actions (send keys) -----
+    def start_slideshow(self):
+        if pyautogui is None:
+            print("[Slides] pyautogui not installed.")
+            return
+        # Slides: ⌘Enter (mac) or Ctrl+Enter (win/linux) starts presenting (if supported)
+        try:
+            if IS_MAC:
+                pyautogui.keyDown("command"); pyautogui.press("enter"); pyautogui.keyUp("command")
+            else:
+                pyautogui.keyDown("ctrl"); pyautogui.press("enter"); pyautogui.keyUp("ctrl")
+            print("[Slides] Start slideshow key sent. Make sure the Slides tab/window is focused.")
+        except Exception as e:
+            print(f"[Slides] Failed to start slideshow: {e}")
+
+    def slides_next(self):
+        if pyautogui is None: return
+        try:
+            pyautogui.press("right")
+            print("[Slides] Next slide →")
+        except Exception as e:
+            print(f"[Slides] next failed: {e}")
+
+    def slides_prev(self):
+        if pyautogui is None: return
+        try:
+            pyautogui.press("left")
+            print("[Slides] Prev slide ←")
+        except Exception as e:
+            print(f"[Slides] prev failed: {e}")
+
+    def slides_exit(self):
+        if pyautogui is None: return
+        try:
+            pyautogui.press("esc")
+            print("[Slides] Exit slideshow ⎋")
+        except Exception as e:
+            print(f"[Slides] exit failed: {e}")
+
     # ----- Camera / Gesture Thread -----
     def camera_loop(self):
         global _last_swipe_fire
@@ -244,9 +321,6 @@ class DemoApp:
             static_image_mode=False, max_num_hands=1, model_complexity=1,
             min_detection_confidence=MIN_DET, min_tracking_confidence=MIN_TRK
         )
-
-        drawer = mp.solutions.drawing_utils
-        style = mp.solutions.drawing_styles
 
         while self.running:
             ok, frame = cap.read()
@@ -268,16 +342,15 @@ class DemoApp:
                 name = classify(lm)
                 idx_xy = (lm[8].x, lm[8].y)
 
-                # draw landmarks on the preview copy (optional)
-                # (we won't show this via OpenCV; preview is handled in Tk)
-                pass
-
             fired = stable_emit(name, now)
             self.name = name
 
             if fired == "fist":
                 self.root.after(0, self.toggle_pause)
             elif fired == "peace":
+                # If Slides Mode is ON, also send Esc to exit before quitting UI
+                if self.slides_mode.get():
+                    self.slides_exit()
                 self.root.after(0, self.quit)
                 break
 
@@ -296,25 +369,25 @@ class DemoApp:
                     _, x1, y1 = hist[-1]
                     dx, dy = x1 - x0, y1 - y0
 
+                    slides_on = self.slides_mode.get()
+
                     # horizontal with POINT
                     if name == "point" and abs(dx) >= SWIPE_MIN_DX and abs(dx) > abs(dy):
-                        if dx > 0:
-                            print("[SWIPE] RIGHT → NEXT_SECTION")
-                            self.root.after(0, self.next_section)
+                        if slides_on:
+                            if dx > 0: self.slides_next()
+                            else:      self.slides_prev()
                         else:
-                            print("[SWIPE] LEFT → PREV_SECTION")
-                            self.root.after(0, self.prev_section)
+                            if dx > 0: self.root.after(0, self.next_section)
+                            else:      self.root.after(0, self.prev_section)
                         _last_swipe_fire = now
 
                     # vertical with THREE
                     elif name == "three" and abs(dy) >= SWIPE_MIN_DY and abs(dy) > abs(dx):
-                        if dy < 0:
-                            print("[SWIPE] UP → SCROLL_UP")
-                            self.root.after(0, self.scroll_up)
-                        else:
-                            print("[SWIPE] DOWN → SCROLL_DOWN")
-                            self.root.after(0, self.scroll_down)
-                        _last_swipe_fire = now
+                        # In Slides mode, we ignore vertical swipes (to keep things simple).
+                        if not slides_on:
+                            if dy < 0: self.root.after(0, self.scroll_up)
+                            else:      self.root.after(0, self.scroll_down)
+                            _last_swipe_fire = now
 
         try:
             hands.close()
