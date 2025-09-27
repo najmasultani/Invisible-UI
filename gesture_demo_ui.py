@@ -1,41 +1,52 @@
-# gesture_demo_ui.py
+# gesture_demo_no_ui.py
 import time
 from math import hypot
-import threading
 import platform
+import argparse
 
 import cv2
 import mediapipe as mp
-import tkinter as tk
-from PIL import Image, ImageTk  # safe preview in Tk
 
-# For sending keys to Google Slides in the browser
+# OPTIONAL: send real keypresses to the active window (Slides/PowerPoint)
 try:
     import pyautogui
 except Exception:
-    pyautogui = None  # we'll warn in the UI if not installed
+    pyautogui = None
 
 IS_MAC = platform.system() == "Darwin"
 
-# ---------- App/Preview settings ----------
-W, H = 640, 360                  # camera capture size
-MIN_DET, MIN_TRK = 0.6, 0.6      # MediaPipe confidences
-PREVIEW_SIZE = (180, 135)        # (w, h) camera tile in UI
-PREVIEW_FPS_MS = 60              # ~16 fps
+# ---------- Camera / MP settings ----------
+W, H = 640, 360
+MIN_DET, MIN_TRK = 0.6, 0.6
 
 # Stabilizer for static gestures
 HOLD_MS, COOL_MS = 250, 800
 _last_name, _start_t, _last_fire_t = None, 0.0, 0.0
 
-# ---------- Finger helpers ----------
+# ---------- Helpers ----------
 def _d(a, b): return hypot(a.x - b.x, a.y - b.y)
 def _hand_size(lm): return _d(lm[0], lm[9]) + 1e-6
 
 def _extended(lm, tip, pip, thr=0.35):
+    """Finger extended if tip is farther from wrist than its PIP joint by a threshold proportion of hand size."""
     wrist = lm[0]
     return (_d(lm[tip], wrist) - _d(lm[pip], wrist)) > (thr * _hand_size(lm))
 
-# ---- gesture classifiers (no fist / no three-finger) ----
+def stable_emit(name, now):
+    """Emit gesture only when held steadily and not on cooldown."""
+    global _last_name, _start_t, _last_fire_t
+    if not name:
+        _last_name, _start_t = None, 0.0
+        return None
+    if name != _last_name:
+        _last_name, _start_t = name, now
+        return None
+    if (now - _start_t) >= HOLD_MS/1000.0 and (now - _last_fire_t) >= COOL_MS/1000.0:
+        _last_fire_t = now
+        return name
+    return None
+
+# ---------- Gesture classifiers ----------
 def is_peace(lm):
     idx, mid = _extended(lm,8,6), _extended(lm,12,10)
     ring, pink = _extended(lm,16,14), _extended(lm,20,18)
@@ -63,7 +74,7 @@ def is_open(lm):
     return all(_extended(lm,t,p) for t,p in [(8,6),(12,10),(16,14),(20,18)])
 
 def is_ok(lm):
-    # 👌 index+thumb tips close (circle) AND other fingers extended
+    # 👌 index+thumb tips close; other fingers extended
     thumb_tip, index_tip = lm[4], lm[8]
     close = _d(thumb_tip, index_tip) < 0.035
     mid_ext  = _extended(lm,12,10)
@@ -89,324 +100,144 @@ def is_thumb_down(lm):
 
 def classify(lm):
     # Order matters: quit → thumbs → rock/shaka → ok/open
-    if is_peace(lm):      return "peace"       # quit
-    if is_thumb_up(lm):   return "thumb_up"    # next
-    if is_thumb_down(lm): return "thumb_down"  # previous
-    if is_rock(lm):       return "rock"        # scroll up / ArrowUp
-    if is_shaka(lm):      return "shaka"       # scroll down / ArrowDown
-    if is_ok(lm):         return "ok"          # start slideshow
-    if is_open(lm):       return "open"        # stop slideshow
+    if is_peace(lm):      return "peace"
+    if is_thumb_up(lm):   return "thumb_up"
+    if is_thumb_down(lm): return "thumb_down"
+    if is_rock(lm):       return "rock"
+    if is_shaka(lm):      return "shaka"
+    if is_ok(lm):         return "ok"
+    if is_open(lm):       return "open"
     return None
 
-def stable_emit(name, now):
-    global _last_name, _start_t, _last_fire_t
-    if not name:
-        _last_name, _start_t = None, 0.0
-        return None
-    if name != _last_name:
-        _last_name, _start_t = name, now
-        return None
-    if (now - _start_t) >= HOLD_MS/1000.0 and (now - _last_fire_t) >= COOL_MS/1000.0:
-        _last_fire_t = now
-        return name
-    return None
+# ---------- Key sending ----------
+def send_next():
+    if pyautogui is None:
+        print("[ACTION] NEXT (simulate)"); return
+    pyautogui.press("right")
 
-# ---------- UI App ----------
-class DemoApp:
-    def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("Gesture Demo • Slides Control")
-        self.root.geometry("1000x660")
-        self.root.configure(bg="white")
+def send_prev():
+    if pyautogui is None:
+        print("[ACTION] PREVIOUS (simulate)"); return
+    pyautogui.press("left")
 
-        # Slides control toggle
-        self.slides_mode = tk.BooleanVar(value=True)  # default ON since you're using Google Slides
+def send_arrow_up():
+    if pyautogui is None:
+        print("[ACTION] ArrowUp (simulate)"); return
+    pyautogui.press("up")
 
-        # simple sections just to visualize local actions
-        self.sections = ["Inbox", "Notes", "Tasks", "Calendar"]
-        self.section_index = 0
+def send_arrow_down():
+    if pyautogui is None:
+        print("[ACTION] ArrowDown (simulate)"); return
+    pyautogui.press("down")
 
-        # for preview/frame exchange across threads
-        self.latest_bgr = None
-        self._tkimg = None
-        self.name = None
+def start_slideshow():
+    if pyautogui is None:
+        print("[ACTION] START SLIDESHOW (simulate)"); return
+    if IS_MAC:
+        pyautogui.keyDown("command"); pyautogui.press("enter"); pyautogui.keyUp("command")
+    else:
+        pyautogui.keyDown("ctrl"); pyautogui.press("enter"); pyautogui.keyUp("ctrl")
+    print("[Slides] Present command sent.")
 
-        self._build_ui()
+def stop_slideshow():
+    if pyautogui is None:
+        print("[ACTION] STOP SLIDESHOW (simulate)"); return
+    pyautogui.press("esc")
+    print("[Slides] Esc sent.")
 
-        self.running = True
-        t = threading.Thread(target=self.camera_loop, daemon=True)
-        t.start()
+# ---------- Main ----------
+def main():
+    parser = argparse.ArgumentParser(description="Gesture control for Google Slides (no UI).")
+    parser.add_argument("--no-preview", action="store_true",
+                        help="Run without showing the camera window.")
+    args = parser.parse_args()
 
-        self.tick_hud()
-        self.render_preview()
+    mp_hands = mp.solutions.hands
+    mp_draw  = mp.solutions.drawing_utils
+    mp_style = mp.solutions.drawing_styles
 
-    # ----- UI -----
-    def _build_ui(self):
-        # Top bar
-        top = tk.Frame(self.root, bg="#111111")
-        top.pack(side="top", fill="x")
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+    if not cap.isOpened():
+        raise RuntimeError("Could not open webcam")
 
-        self.status = tk.Label(
-            top, text="", fg="white", bg="#111111",
-            font=("Arial", 14), padx=12, pady=8
-        )
-        self.status.pack(side="left")
+    hands = mp_hands.Hands(
+        static_image_mode=False,
+        max_num_hands=1,
+        model_complexity=1,
+        min_detection_confidence=MIN_DET,
+        min_tracking_confidence=MIN_TRK,
+    )
 
-        ctrls = tk.Frame(top, bg="#111111")
-        ctrls.pack(side="right", padx=8)
+    print("Controls:")
+    print("  ✌️  Peace  -> Quit (Esc first)")
+    print("  👍  Thumbs-Up -> Next slide")
+    print("  👎  Thumbs-Down -> Previous slide")
+    print("  🤘  Rock -> ArrowUp")
+    print("  🤙  Shaka -> ArrowDown")
+    print("  👌  OK -> Start slideshow (Cmd/Ctrl+Enter)")
+    print("  ✋  Open -> Stop slideshow (Esc)")
+    print("Press 'q' to quit.")
 
-        slides_chk = tk.Checkbutton(
-            ctrls, text="Slides Mode", variable=self.slides_mode,
-            fg="white", bg="#111111", selectcolor="#111111",
-            activebackground="#111111", activeforeground="white"
-        )
-        slides_chk.pack(side="right", padx=8)
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            continue
 
-        start_btn = tk.Button(
-            ctrls, text="Start slideshow (⌘/Ctrl+Enter)",
-            command=self.start_slideshow, padx=10, pady=4
-        )
-        start_btn.pack(side="right", padx=8)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        res = hands.process(rgb)
+        now = time.time()
 
-        # Camera preview
-        self.preview = tk.Label(self.root, bd=1, relief="solid", bg="white")
-        self.preview.place(x=800, y=58, width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+        name = None
+        if res.multi_hand_landmarks:
+            lm = res.multi_hand_landmarks[0].landmark
+            name = classify(lm)
 
-        # Body split (for demo local actions)
-        body = tk.Frame(self.root, bg="white")
-        body.pack(side="top", fill="both", expand=True)
+            if not args.no_preview:
+                mp_draw.draw_landmarks(
+                    frame, res.multi_hand_landmarks[0],
+                    mp_hands.HAND_CONNECTIONS,
+                    mp_style.get_default_hand_landmarks_style(),
+                    mp_style.get_default_hand_connections_style()
+                )
 
-        # Left: sections list
-        left = tk.Frame(body, width=220, bg="white")
-        left.pack(side="left", fill="y")
-        tk.Label(left, text="Sections", font=("Arial", 12, "bold"),
-                 fg="#111", bg="white").pack(anchor="w", padx=12, pady=(12, 0))
+        fired = stable_emit(name, now)
 
-        self.listbox = tk.Listbox(
-            left, height=len(self.sections),
-            fg="#111111", bg="white", highlightthickness=1, selectbackground="#d0ebff"
-        )
-        for s in self.sections:
-            self.listbox.insert("end", s)
-        self.listbox.pack(fill="y", padx=12, pady=10)
-        self.listbox.select_set(0)
-
-        # Right: scrollable content (used for Rock/Shaka when Slides Mode is OFF)
-        right = tk.Frame(body, bg="white")
-        right.pack(side="left", fill="both", expand=True)
-
-        self.canvas = tk.Canvas(right, bg="white", highlightthickness=0)
-        self.scroll_y = tk.Scrollbar(right, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.scroll_y.set)
-        self.scroll_y.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
-
-        self.content = tk.Frame(self.canvas, bg="white")
-        self.canvas.create_window((0, 0), window=self.content, anchor="nw")
-
-        for i in range(60):
-            tk.Label(
-                self.content,
-                text=f"Line {i+1}: Lorem ipsum dolor sit amet…",
-                bg="white", fg="#111111", anchor="w"
-            ).pack(fill="x", padx=16, pady=3)
-
-        self.content.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-
-        hint_text = (
-            "Peace ✌️=Quit • Thumbs-Up 👍=Next • Thumbs-Down 👎=Previous • "
-            "Rock 🤘=Scroll Up (UI) / ArrowUp (Slides) • Shaka 🤙=Scroll Down (UI) / ArrowDown (Slides) • "
-            "OK 👌=Start Slideshow • Open ✋=Stop Slideshow"
-        )
-        hint = tk.Label(self.root, text=hint_text, fg="#333333", bg="white", wraplength=980, justify="left")
-        hint.pack(side="bottom", fill="x", pady=8)
-
-        if pyautogui is None:
-            warn = tk.Label(
-                self.root,
-                text="Slides Mode needs 'pyautogui' (pip install pyautogui) and Accessibility permission on macOS.",
-                fg="#b00020", bg="white"
-            )
-            warn.pack(side="bottom", pady=(0, 8))
-
-    # ----- HUD update -----
-    def tick_hud(self):
-        mode = "Slides" if self.slides_mode.get() else "Local UI"
-        self.status.config(text=f"Mode={mode} | static: {self.name or '-'}")
-        if self.running:
-            self.root.after(120, self.tick_hud)
-
-    # ----- Local UI Actions (for demo pane) -----
-    def next_section(self):
-        self.section_index = (self.section_index + 1) % len(self.sections)
-        self.listbox.select_clear(0, "end")
-        self.listbox.select_set(self.section_index)
-
-    def prev_section(self):
-        self.section_index = (self.section_index - 1) % len(self.sections)
-        self.listbox.select_clear(0, "end")
-        self.listbox.select_set(self.section_index)
-
-    def scroll_up(self):   self.canvas.yview_scroll(-3, "units")
-    def scroll_down(self): self.canvas.yview_scroll(3,  "units")
-
-    def quit(self):
-        print("[STATE] Quit via peace sign")
-        self.running = False
-        self.root.after(100, self.root.destroy)
-
-    # ----- Slides Actions (send keys) -----
-    def start_slideshow(self):
-        if pyautogui is None:
-            print("[Slides] pyautogui not installed.")
-            return
-        try:
-            if IS_MAC:
-                pyautogui.keyDown("command"); pyautogui.press("enter"); pyautogui.keyUp("command")
-            else:
-                pyautogui.keyDown("ctrl"); pyautogui.press("enter"); pyautogui.keyUp("ctrl")
-            print("[Slides] Start slideshow key sent. Ensure Slides window/tab is focused.")
-        except Exception as e:
-            print(f"[Slides] Failed to start slideshow: {e}")
-
-    def slides_next(self):
-        if pyautogui is None: return
-        try:
-            pyautogui.press("right")
-            print("[Slides] Next slide →")
-        except Exception as e:
-            print(f"[Slides] next failed: {e}")
-
-    def slides_prev(self):
-        if pyautogui is None: return
-        try:
-            pyautogui.press("left")
-            print("[Slides] Prev slide ←")
-        except Exception as e:
-            print(f"[Slides] prev failed: {e}")
-
-    def slides_exit(self):
-        if pyautogui is None: return
-        try:
-            pyautogui.press("esc")
-            print("[Slides] Exit slideshow ⎋")
-        except Exception as e:
-            print(f"[Slides] exit failed: {e}")
-
-    def slides_arrow_up(self):
-        if pyautogui is None: return
-        try:
-            pyautogui.press("up")
-            print("[Slides] ArrowUp")
-        except Exception as e:
-            print(f"[Slides] ArrowUp failed: {e}")
-
-    def slides_arrow_down(self):
-        if pyautogui is None: return
-        try:
-            pyautogui.press("down")
-            print("[Slides] ArrowDown")
-        except Exception as e:
-            print(f"[Slides] ArrowDown failed: {e}")
-
-    # ----- Camera / Gesture Thread -----
-    def camera_loop(self):
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
-        if not cap.isOpened():
-            print("Could not open webcam")
-            self.root.after(0, self.quit)
-            return
-
-        hands = mp.solutions.hands.Hands(
-            static_image_mode=False, max_num_hands=1, model_complexity=1,
-            min_detection_confidence=MIN_DET, min_tracking_confidence=MIN_TRK
-        )
-
-        while self.running:
-            ok, frame = cap.read()
-            if not ok:
-                continue
-
-            # Keep a copy for preview BEFORE drawing
-            self.latest_bgr = frame.copy()
-
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res = hands.process(rgb)
-            now = time.time()
-
-            name = None
-            if res.multi_hand_landmarks:
-                lm = res.multi_hand_landmarks[0].landmark
-                name = classify(lm)
-
-            fired = stable_emit(name, now)
-            self.name = name
-
-            # --- static gesture actions ---
+        if fired:
             if fired == "peace":
-                if self.slides_mode.get():
-                    self.slides_exit()
-                self.root.after(0, self.quit)
+                # exit slideshow if presenting, then quit
+                stop_slideshow()
+                print("[STATE] Quit.")
                 break
-
             elif fired == "thumb_up":
-                if self.slides_mode.get():
-                    self.slides_next()
-                else:
-                    self.root.after(0, self.next_section)
-
+                print("[GESTURE] 👍 -> NEXT"); send_next()
             elif fired == "thumb_down":
-                if self.slides_mode.get():
-                    self.slides_prev()
-                else:
-                    self.root.after(0, self.prev_section)
-
+                print("[GESTURE] 👎 -> PREVIOUS"); send_prev()
             elif fired == "rock":
-                if self.slides_mode.get():
-                    self.slides_arrow_up()
-                else:
-                    self.root.after(0, self.scroll_up)
-
+                print("[GESTURE] 🤘 -> ArrowUp"); send_arrow_up()
             elif fired == "shaka":
-                if self.slides_mode.get():
-                    self.slides_arrow_down()
-                else:
-                    self.root.after(0, self.scroll_down)
-
+                print("[GESTURE] 🤙 -> ArrowDown"); send_arrow_down()
             elif fired == "ok":
-                self.start_slideshow()
-
+                print("[GESTURE] 👌 -> START slideshow"); start_slideshow()
             elif fired == "open":
-                self.slides_exit()
+                print("[GESTURE] ✋ -> STOP slideshow"); stop_slideshow()
 
-        try:
-            hands.close()
-        except Exception:
-            pass
-        try:
-            cap.release()
-        except Exception:
-            pass
+        if not args.no_preview:
+            hud = f"{name or '-'}"
+            cv2.putText(frame, hud, (10, 26),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+            cv2.imshow("Gesture Control (press q to quit)", frame)
+            if (cv2.waitKey(1) & 0xFF) == ord('q'):
+                break
+        else:
+            # tiny sleep to avoid 100% CPU when preview is off
+            time.sleep(0.005)
 
-    # ----- Preview in Tk (main thread) -----
-    def render_preview(self):
-        if self.latest_bgr is not None:
-            rgb = cv2.cvtColor(self.latest_bgr, cv2.COLOR_BGR2RGB)
-            hud = f"{self.name or '-'} | Mode={'Slides' if self.slides_mode.get() else 'Local'}"
-            cv2.putText(rgb, hud, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 180, 0), 1)
-            img = Image.fromarray(rgb).resize(PREVIEW_SIZE)
-            self._tkimg = ImageTk.PhotoImage(img)
-            self.preview.config(image=self._tkimg)
-
-        if self.running:
-            self.root.after(PREVIEW_FPS_MS, self.render_preview)
-
-    def run(self):
-        self.root.mainloop()
+    hands.close()
+    cap.release()
+    if not args.no_preview:
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    mp.solutions.hands  # ensure module load
-    app = DemoApp()
-    app.run()
+    main()

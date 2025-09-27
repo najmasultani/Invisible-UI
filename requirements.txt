@@ -1,5 +1,17 @@
+# --- Core webcam & gesture detection ---
 opencv-python==4.9.0.80
 mediapipe==0.10.14
-opencv-python==4.9.0.80
-mediapipe==0.10.14
+
+# --- Keyboard / mouse automation for Slides control ---
 pyautogui==0.9.54
+pillow==10.3.0          # needed for ImageTk (preview frames in Tk)
+
+# --- Voice control (Google STT fallback) ---
+SpeechRecognition==3.10.0
+pyaudio==0.2.14         # mic input (macOS may need: brew install portaudio)
+
+# --- ElevenLabs optional voice/STT ---
+requests==2.31.0        # HTTP client used to call ElevenLabs STT endpoint
+
+# --- Tkinter UI (macOS/Windows usually ship with it) ---
+# tk  (comes with Python on macOS and Windows; no pip install needed)
