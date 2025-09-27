@@ -1,14 +1,21 @@
 # gesture_demo_ui.py
 import time
-from collections import deque
 from math import hypot
 import threading
+import platform
 
 import cv2
 import mediapipe as mp
 import tkinter as tk
-from tkinter import ttk
-from PIL import Image, ImageTk  # for safe preview in Tk
+from PIL import Image, ImageTk  # safe preview in Tk
+
+# For sending keys to Google Slides in the browser
+try:
+    import pyautogui
+except Exception:
+    pyautogui = None  # we'll warn in the UI if not installed
+
+IS_MAC = platform.system() == "Darwin"
 
 # ---------- App/Preview settings ----------
 W, H = 640, 360                  # camera capture size
@@ -20,62 +27,75 @@ PREVIEW_FPS_MS = 60              # ~16 fps
 HOLD_MS, COOL_MS = 250, 800
 _last_name, _start_t, _last_fire_t = None, 0.0, 0.0
 
-# Swipes (index fingertip displacement in normalized coords)
-SWIPE_WINDOW_MS = 160
-SWIPE_MIN_DX, SWIPE_MIN_DY = 0.14, 0.14
-SWIPE_COOL_MS = 500
-_last_swipe_fire = 0.0
-
-# Finger history for swipe detection
-hist = deque(maxlen=30)  # (t, x, y)
-
 # ---------- Finger helpers ----------
 def _d(a, b): return hypot(a.x - b.x, a.y - b.y)
 def _hand_size(lm): return _d(lm[0], lm[9]) + 1e-6
 
 def _extended(lm, tip, pip, thr=0.35):
-    # A finger is "extended" if the tip is noticeably farther from the wrist than its PIP joint
     wrist = lm[0]
     return (_d(lm[tip], wrist) - _d(lm[pip], wrist)) > (thr * _hand_size(lm))
 
-def is_fist(lm):
-    # none of index/middle/ring/pinky extended (ignore thumb for robustness)
-    fingers = [
-        _extended(lm, 8,6), _extended(lm,12,10),
-        _extended(lm,16,14), _extended(lm,20,18)
-    ]
-    return sum(fingers) == 0
-
-def is_point(lm):
-    # index only extended
-    idx  = _extended(lm,8,6)
-    mid  = _extended(lm,12,10)
-    ring = _extended(lm,16,14)
-    pink = _extended(lm,20,18)
-    return idx and not (mid or ring or pink)
-
-def is_three(lm):
-    # index + middle + ring extended; pinky curled
-    idx  = _extended(lm,8,6)
-    mid  = _extended(lm,12,10)
-    ring = _extended(lm,16,14)
-    pink = _extended(lm,20,18)
-    return idx and mid and ring and not pink
-
+# ---- gesture classifiers (no fist / no three-finger) ----
 def is_peace(lm):
-    # index + middle extended, ring + pinky curled
+    idx, mid = _extended(lm,8,6), _extended(lm,12,10)
+    ring, pink = _extended(lm,16,14), _extended(lm,20,18)
+    return idx and mid and not (ring or pink)
+
+def is_rock(lm):
+    # 🤘 index + pinky extended; middle+ring curled
     idx  = _extended(lm,8,6)
+    pink = _extended(lm,20,18)
     mid  = _extended(lm,12,10)
     ring = _extended(lm,16,14)
-    pink = _extended(lm,20,18)
-    return idx and mid and (not ring) and (not pink)
+    return idx and pink and not (mid or ring)
+
+def is_shaka(lm):
+    # 🤙 thumb + pinky extended; others curled
+    thumb = _extended(lm,4,2)
+    pink  = _extended(lm,20,18)
+    idx   = _extended(lm,8,6)
+    mid   = _extended(lm,12,10)
+    ring  = _extended(lm,16,14)
+    return thumb and pink and not (idx or mid or ring)
+
+def is_open(lm):
+    # ✋ all four fingers extended (ignore thumb for robustness)
+    return all(_extended(lm,t,p) for t,p in [(8,6),(12,10),(16,14),(20,18)])
+
+def is_ok(lm):
+    # 👌 index+thumb tips close (circle) AND other fingers extended
+    thumb_tip, index_tip = lm[4], lm[8]
+    close = _d(thumb_tip, index_tip) < 0.035
+    mid_ext  = _extended(lm,12,10)
+    ring_ext = _extended(lm,16,14)
+    pink_ext = _extended(lm,20,18)
+    return close and (mid_ext and ring_ext and pink_ext)
+
+def is_thumb_up(lm):
+    # 👍 thumb extended; others curled; thumb pointing UP (tip y << base y)
+    thumb_ext = _extended(lm,4,2)
+    others_curled = sum([_extended(lm,8,6), _extended(lm,12,10),
+                         _extended(lm,16,14), _extended(lm,20,18)]) == 0
+    up = (lm[4].y + 0.02) < lm[2].y  # y increases downward
+    return thumb_ext and others_curled and up
+
+def is_thumb_down(lm):
+    # 👎 thumb extended; others curled; thumb pointing DOWN (tip y >> base y)
+    thumb_ext = _extended(lm,4,2)
+    others_curled = sum([_extended(lm,8,6), _extended(lm,12,10),
+                         _extended(lm,16,14), _extended(lm,20,18)]) == 0
+    down = (lm[4].y - 0.02) > lm[2].y
+    return thumb_ext and others_curled and down
 
 def classify(lm):
-    # order matters to avoid conflicts
-    if is_peace(lm): return "peace"   # quit
-    if is_fist(lm):  return "fist"    # pause/resume
-    if is_point(lm): return "point"   # L/R navigation
-    if is_three(lm): return "three"   # U/D scrolling
+    # Order matters: quit → thumbs → rock/shaka → ok/open
+    if is_peace(lm):      return "peace"       # quit
+    if is_thumb_up(lm):   return "thumb_up"    # next
+    if is_thumb_down(lm): return "thumb_down"  # previous
+    if is_rock(lm):       return "rock"        # scroll up / ArrowUp
+    if is_shaka(lm):      return "shaka"       # scroll down / ArrowDown
+    if is_ok(lm):         return "ok"          # start slideshow
+    if is_open(lm):       return "open"        # stop slideshow
     return None
 
 def stable_emit(name, now):
@@ -95,28 +115,25 @@ def stable_emit(name, now):
 class DemoApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Gesture Demo (gesture-only)")
-        self.root.geometry("980x640")
-        self.root.configure(bg="white")  # light background
+        self.root.title("Gesture Demo • Slides Control")
+        self.root.geometry("1000x660")
+        self.root.configure(bg="white")
 
-        # quick quit keybinds
-        self.root.bind("q", lambda e: self.quit())
-        self.root.bind("<Escape>", lambda e: self.quit())
+        # Slides control toggle
+        self.slides_mode = tk.BooleanVar(value=True)  # default ON since you're using Google Slides
 
-        self.paused = False
+        # simple sections just to visualize local actions
         self.sections = ["Inbox", "Notes", "Tasks", "Calendar"]
         self.section_index = 0
 
         # for preview/frame exchange across threads
         self.latest_bgr = None
-        self._tkimg = None  # keep a ref so ImageTk isn't GC'd
-        self.name = None    # current static gesture name
+        self._tkimg = None
+        self.name = None
 
         self._build_ui()
 
         self.running = True
-        self.cap, self.hands = None, None
-
         t = threading.Thread(target=self.camera_loop, daemon=True)
         t.start()
 
@@ -135,21 +152,32 @@ class DemoApp:
         )
         self.status.pack(side="left")
 
-        self.chip = tk.Label(top, text="LIVE", fg="white", bg="#2e7d32", padx=10, pady=6)
-        self.chip.pack(side="right", padx=8)
+        ctrls = tk.Frame(top, bg="#111111")
+        ctrls.pack(side="right", padx=8)
 
-        # Camera preview box (top-right)
+        slides_chk = tk.Checkbutton(
+            ctrls, text="Slides Mode", variable=self.slides_mode,
+            fg="white", bg="#111111", selectcolor="#111111",
+            activebackground="#111111", activeforeground="white"
+        )
+        slides_chk.pack(side="right", padx=8)
+
+        start_btn = tk.Button(
+            ctrls, text="Start slideshow (⌘/Ctrl+Enter)",
+            command=self.start_slideshow, padx=10, pady=4
+        )
+        start_btn.pack(side="right", padx=8)
+
+        # Camera preview
         self.preview = tk.Label(self.root, bd=1, relief="solid", bg="white")
-        # Place it under the top bar to the right
-        self.preview.place(x=self.root.winfo_reqwidth()-PREVIEW_SIZE[0]-20, y=56,
-                           width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
+        self.preview.place(x=800, y=58, width=PREVIEW_SIZE[0], height=PREVIEW_SIZE[1])
 
-        # Body split: left sections, right content
+        # Body split (for demo local actions)
         body = tk.Frame(self.root, bg="white")
         body.pack(side="top", fill="both", expand=True)
 
         # Left: sections list
-        left = tk.Frame(body, width=200, bg="white")
+        left = tk.Frame(body, width=220, bg="white")
         left.pack(side="left", fill="y")
         tk.Label(left, text="Sections", font=("Arial", 12, "bold"),
                  fg="#111", bg="white").pack(anchor="w", padx=12, pady=(12, 0))
@@ -163,7 +191,7 @@ class DemoApp:
         self.listbox.pack(fill="y", padx=12, pady=10)
         self.listbox.select_set(0)
 
-        # Right: scrollable content
+        # Right: scrollable content (used for Rock/Shaka when Slides Mode is OFF)
         right = tk.Frame(body, bg="white")
         right.pack(side="left", fill="both", expand=True)
 
@@ -176,7 +204,6 @@ class DemoApp:
         self.content = tk.Frame(self.canvas, bg="white")
         self.canvas.create_window((0, 0), window=self.content, anchor="nw")
 
-        # Populate visible, dark text on white bg
         for i in range(60):
             tk.Label(
                 self.content,
@@ -186,23 +213,30 @@ class DemoApp:
 
         self.content.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
-        hint = tk.Label(
-            self.root,
-            text="Fist=Pause/Resume • Peace=Quit • Point + Swipe L/R=Change Section • Three + Swipe U/D=Scroll",
-            fg="#333333", bg="white"
+        hint_text = (
+            "Peace ✌️=Quit • Thumbs-Up 👍=Next • Thumbs-Down 👎=Previous • "
+            "Rock 🤘=Scroll Up (UI) / ArrowUp (Slides) • Shaka 🤙=Scroll Down (UI) / ArrowDown (Slides) • "
+            "OK 👌=Start Slideshow • Open ✋=Stop Slideshow"
         )
+        hint = tk.Label(self.root, text=hint_text, fg="#333333", bg="white", wraplength=980, justify="left")
         hint.pack(side="bottom", fill="x", pady=8)
+
+        if pyautogui is None:
+            warn = tk.Label(
+                self.root,
+                text="Slides Mode needs 'pyautogui' (pip install pyautogui) and Accessibility permission on macOS.",
+                fg="#b00020", bg="white"
+            )
+            warn.pack(side="bottom", pady=(0, 8))
 
     # ----- HUD update -----
     def tick_hud(self):
-        sec = self.sections[self.section_index]
-        self.status.config(text=f"PAUSED={self.paused} | Section: {sec} | static: {self.name or '-'}")
-        self.chip.config(text="PAUSED" if self.paused else "LIVE",
-                         bg="#c62828" if self.paused else "#2e7d32")
+        mode = "Slides" if self.slides_mode.get() else "Local UI"
+        self.status.config(text=f"Mode={mode} | static: {self.name or '-'}")
         if self.running:
             self.root.after(120, self.tick_hud)
 
-    # ----- Actions (UI only, no OS keys) -----
+    # ----- Local UI Actions (for demo pane) -----
     def next_section(self):
         self.section_index = (self.section_index + 1) % len(self.sections)
         self.listbox.select_clear(0, "end")
@@ -216,22 +250,67 @@ class DemoApp:
     def scroll_up(self):   self.canvas.yview_scroll(-3, "units")
     def scroll_down(self): self.canvas.yview_scroll(3,  "units")
 
-    def toggle_pause(self):
-        self.paused = not self.paused
-        print(f"[STATE] PAUSED={self.paused}")
-
     def quit(self):
         print("[STATE] Quit via peace sign")
         self.running = False
-        try:
-            if self.cap: self.cap.release()
-        except Exception:
-            pass
         self.root.after(100, self.root.destroy)
+
+    # ----- Slides Actions (send keys) -----
+    def start_slideshow(self):
+        if pyautogui is None:
+            print("[Slides] pyautogui not installed.")
+            return
+        try:
+            if IS_MAC:
+                pyautogui.keyDown("command"); pyautogui.press("enter"); pyautogui.keyUp("command")
+            else:
+                pyautogui.keyDown("ctrl"); pyautogui.press("enter"); pyautogui.keyUp("ctrl")
+            print("[Slides] Start slideshow key sent. Ensure Slides window/tab is focused.")
+        except Exception as e:
+            print(f"[Slides] Failed to start slideshow: {e}")
+
+    def slides_next(self):
+        if pyautogui is None: return
+        try:
+            pyautogui.press("right")
+            print("[Slides] Next slide →")
+        except Exception as e:
+            print(f"[Slides] next failed: {e}")
+
+    def slides_prev(self):
+        if pyautogui is None: return
+        try:
+            pyautogui.press("left")
+            print("[Slides] Prev slide ←")
+        except Exception as e:
+            print(f"[Slides] prev failed: {e}")
+
+    def slides_exit(self):
+        if pyautogui is None: return
+        try:
+            pyautogui.press("esc")
+            print("[Slides] Exit slideshow ⎋")
+        except Exception as e:
+            print(f"[Slides] exit failed: {e}")
+
+    def slides_arrow_up(self):
+        if pyautogui is None: return
+        try:
+            pyautogui.press("up")
+            print("[Slides] ArrowUp")
+        except Exception as e:
+            print(f"[Slides] ArrowUp failed: {e}")
+
+    def slides_arrow_down(self):
+        if pyautogui is None: return
+        try:
+            pyautogui.press("down")
+            print("[Slides] ArrowDown")
+        except Exception as e:
+            print(f"[Slides] ArrowDown failed: {e}")
 
     # ----- Camera / Gesture Thread -----
     def camera_loop(self):
-        global _last_swipe_fire
         cap = cv2.VideoCapture(0)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
@@ -245,15 +324,12 @@ class DemoApp:
             min_detection_confidence=MIN_DET, min_tracking_confidence=MIN_TRK
         )
 
-        drawer = mp.solutions.drawing_utils
-        style = mp.solutions.drawing_styles
-
         while self.running:
             ok, frame = cap.read()
             if not ok:
                 continue
 
-            # Keep a copy for preview BEFORE drawing, so HUD stays readable
+            # Keep a copy for preview BEFORE drawing
             self.latest_bgr = frame.copy()
 
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -261,60 +337,49 @@ class DemoApp:
             now = time.time()
 
             name = None
-            idx_xy = None
-
             if res.multi_hand_landmarks:
                 lm = res.multi_hand_landmarks[0].landmark
                 name = classify(lm)
-                idx_xy = (lm[8].x, lm[8].y)
-
-                # draw landmarks on the preview copy (optional)
-                # (we won't show this via OpenCV; preview is handled in Tk)
-                pass
 
             fired = stable_emit(name, now)
             self.name = name
 
-            if fired == "fist":
-                self.root.after(0, self.toggle_pause)
-            elif fired == "peace":
+            # --- static gesture actions ---
+            if fired == "peace":
+                if self.slides_mode.get():
+                    self.slides_exit()
                 self.root.after(0, self.quit)
                 break
 
-            if idx_xy:
-                hist.append((now, idx_xy[0], idx_xy[1]))
+            elif fired == "thumb_up":
+                if self.slides_mode.get():
+                    self.slides_next()
+                else:
+                    self.root.after(0, self.next_section)
 
-            # swipes when not paused
-            if not self.paused and len(hist) >= 2:
-                t_cut = now - SWIPE_WINDOW_MS/1000.0
-                old = None
-                for t, x, y in hist:
-                    if t >= t_cut:
-                        old = (t, x, y); break
-                if old and (now - _last_swipe_fire) >= SWIPE_COOL_MS/1000.0:
-                    _, x0, y0 = old
-                    _, x1, y1 = hist[-1]
-                    dx, dy = x1 - x0, y1 - y0
+            elif fired == "thumb_down":
+                if self.slides_mode.get():
+                    self.slides_prev()
+                else:
+                    self.root.after(0, self.prev_section)
 
-                    # horizontal with POINT
-                    if name == "point" and abs(dx) >= SWIPE_MIN_DX and abs(dx) > abs(dy):
-                        if dx > 0:
-                            print("[SWIPE] RIGHT → NEXT_SECTION")
-                            self.root.after(0, self.next_section)
-                        else:
-                            print("[SWIPE] LEFT → PREV_SECTION")
-                            self.root.after(0, self.prev_section)
-                        _last_swipe_fire = now
+            elif fired == "rock":
+                if self.slides_mode.get():
+                    self.slides_arrow_up()
+                else:
+                    self.root.after(0, self.scroll_up)
 
-                    # vertical with THREE
-                    elif name == "three" and abs(dy) >= SWIPE_MIN_DY and abs(dy) > abs(dx):
-                        if dy < 0:
-                            print("[SWIPE] UP → SCROLL_UP")
-                            self.root.after(0, self.scroll_up)
-                        else:
-                            print("[SWIPE] DOWN → SCROLL_DOWN")
-                            self.root.after(0, self.scroll_down)
-                        _last_swipe_fire = now
+            elif fired == "shaka":
+                if self.slides_mode.get():
+                    self.slides_arrow_down()
+                else:
+                    self.root.after(0, self.scroll_down)
+
+            elif fired == "ok":
+                self.start_slideshow()
+
+            elif fired == "open":
+                self.slides_exit()
 
         try:
             hands.close()
@@ -328,12 +393,9 @@ class DemoApp:
     # ----- Preview in Tk (main thread) -----
     def render_preview(self):
         if self.latest_bgr is not None:
-            # Convert latest frame BGR -> RGB
             rgb = cv2.cvtColor(self.latest_bgr, cv2.COLOR_BGR2RGB)
-            # Draw a small HUD onto the preview image
-            hud = f"{self.name or '-'} | {'PAUSED' if self.paused else 'LIVE'}"
+            hud = f"{self.name or '-'} | Mode={'Slides' if self.slides_mode.get() else 'Local'}"
             cv2.putText(rgb, hud, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 180, 0), 1)
-
             img = Image.fromarray(rgb).resize(PREVIEW_SIZE)
             self._tkimg = ImageTk.PhotoImage(img)
             self.preview.config(image=self._tkimg)
