@@ -22,7 +22,7 @@ COMMANDS = {
     "back":                act.prev_slide,
     "previous":            act.prev_slide,
     "previous slide":      act.prev_slide,
-    "prev":                act.prev_slide,
+    "former":                act.prev_slide,
 
     "start":               act.start_slideshow,
     "start slideshow":     act.start_slideshow,
@@ -118,7 +118,8 @@ def main():
     rec.operation_timeout = 8
 
     # If you have multiple mics, set device_index here, e.g. sr.Microphone(device_index=1)
-    with sr.Microphone() as mic:
+
+    with sr.Microphone(device_index=0) as mic:
         print("[voice] Calibrating… stay quiet for 1.0s")
         rec.adjust_for_ambient_noise(mic, duration=1.0)
         rec.dynamic_energy_threshold = False
