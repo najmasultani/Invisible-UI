@@ -40,6 +40,8 @@ We are building a **gesture-based navigation system** that allows users to contr
 
 ## 🔄 System Flow Overview
 
+
+
 Create virtual environment:
 ```bash
 python -m venv .venv
