@@ -17,8 +17,13 @@ We are building a **gesture-based navigation system** that allows users to contr
 ### 2. Video Stream → Gesture Classification
 - Continuously capture video frames from the webcam.
 - Analyze each frame to identify gestures such as:
-  - `"Fist"`
-  - `"3 fingers together, horizontal (pointing up or down)"`
+  - Fist → toggle PAUSE/RESUME
+  - Peace (✌️) → QUIT (also sends Esc if Slides Mode is ON)
+  - Rock (🤘) → SCROLL UP (UI) / Up Arrow (Slides Mode)
+  - Shaka (🤙) → SCROLL DOWN (UI) / Down Arrow (Slides Mode)
+  - Three fingers (index+middle+ring) + swipe L/R → Next/Prev Section (UI) / Next/Prev Slide (Slides Mode)
+  - OK sign (👌) → START SLIDESHOW (Cmd/Ctrl+Enter)
+  - Open palm (✋) → STOP SLIDESHOW (Esc)
 
 ### 3. Gesture → Keyboard Command Mapping
 - Map each recognized gesture to a corresponding keyboard command.
@@ -32,15 +37,6 @@ We are building a **gesture-based navigation system** that allows users to contr
 
 ### 4. Keyboard Command → Presentation Control
 - Google Slides (or similar platforms) respond to arrow key input:
-  - **Up / Left Arrow** → Previous slide
-  - **Down / Right Arrow** → Next slide
-  - Fist → toggle PAUSE/RESUME
-  - Peace (✌️) → QUIT (also sends Esc if Slides Mode is ON)
-  - Rock (🤘) → SCROLL UP (UI) / Up Arrow (Slides Mode)
-  - Shaka (🤙) → SCROLL DOWN (UI) / Down Arrow (Slides Mode)
-  - Three fingers (index+middle+ring) + swipe L/R → Next/Prev Section (UI) / Next/Prev Slide (Slides Mode)
-  - OK sign (👌) → START SLIDESHOW (Cmd/Ctrl+Enter)
-  - Open palm (✋) → STOP SLIDESHOW (Esc)
 - Simulated key presses trigger slide navigation.
 
 ---
